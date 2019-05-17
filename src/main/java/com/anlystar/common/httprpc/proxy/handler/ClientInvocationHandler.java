@@ -23,6 +23,7 @@ import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
 import com.anlystar.common.httprpc.annotation.RpcParam;
+import com.anlystar.common.httprpc.annotation.URL;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -102,9 +103,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             requestMethod = httpMethod.value();
         }
 
-        String key = String.format("RPC.%s", getMethodSign(method)).toLowerCase();
-
-        String requestUrl = env.getProperty(key);
+        String requestUrl = getUrl(method);
 
         if (StringUtils.isBlank(requestUrl)) {
             throw new IllegalArgumentException("未配置URL地址参数");
@@ -182,27 +181,30 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         return OBJECT_MAPPER.readValue(response, TYPE_FACTORY.constructType(method.getGenericReturnType()));
     }
 
-    protected String getMethodSign(Method method) {
-        return method.getDeclaringClass().getSimpleName() + "." + method.getName() + "("
-                + getParametersSign(method) + ")";
-    }
+    /**
+     * 获取 请求url
+     *
+     * @param method
+     *
+     * @return
+     */
+    protected String getUrl(Method method) {
 
-    protected String getParametersSign(Method method) {
+        String requestUrl = null;
 
-        StringBuilder sb = new StringBuilder("");
-
-        Class<?>[] clazzs = method.getParameterTypes();
-
-        if (clazzs.length > 0) {
-            for (int i = 0, len = clazzs.length; i < len; i++) {
-                if (i > 0) {
-                    sb.append(",");
-                }
-                Class<?> clazz = clazzs[i];
-                sb.append(clazz.getSimpleName());
-            }
+        URL url = method.getAnnotation(URL.class);
+        if (url == null) {
+            return requestUrl;
         }
-        return sb.toString();
+
+        requestUrl = env.getProperty(url.value());
+
+        if (requestUrl == null || "".equals(requestUrl)) {
+            requestUrl = url.defaultUrl();
+        }
+
+        return requestUrl;
+
     }
 
     protected boolean isWrapClass(Class clz) {
