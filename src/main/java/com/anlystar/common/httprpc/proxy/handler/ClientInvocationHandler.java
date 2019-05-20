@@ -10,20 +10,18 @@ import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.client.config.RequestConfig;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cglib.beans.BeanMap;
 import org.springframework.core.env.Environment;
 
-import com.anlystar.common.helper.HttpClientHelper;
 import com.anlystar.common.httprpc.annotation.HttpMethod;
 import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
 import com.anlystar.common.httprpc.annotation.RpcParam;
 import com.anlystar.common.httprpc.annotation.URL;
+import com.anlystar.common.httprpc.helper.HttpClientHelper;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,10 +45,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
      */
     protected final static ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     /**
-     * http client
-     */
-    protected final static CloseableHttpClient HTTP_CLIENT = HttpClientBuilder.create().build();
-    /**
      * 超时时间
      */
     protected final static int TIMEOUT = 20000;
@@ -59,12 +53,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
      */
     protected final static RequestConfig REQUEST_CONFIG;
 
-    /**
-     * 默认编码
-     */
-    protected final static String DEFAULT_CHARSET = "UTF-8";
-
-    //
     private final static TypeFactory TYPE_FACTORY = TypeFactory.defaultInstance();
 
     static {
@@ -83,7 +71,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 .setRedirectsEnabled(true).build();
     }
 
-    protected Logger logger = LoggerFactory.getLogger(getClass());
+    private Logger logger = LoggerFactory.getLogger(getClass());
+
     private Environment env;
 
     public ClientInvocationHandler(Environment env) {
