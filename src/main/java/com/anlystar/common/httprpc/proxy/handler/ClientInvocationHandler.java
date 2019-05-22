@@ -5,16 +5,24 @@ package com.anlystar.common.httprpc.proxy.handler;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 
+import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.http.HttpResponse;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.concurrent.FutureCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.cglib.beans.BeanMap;
 import org.springframework.core.env.Environment;
 
+import com.anlystar.common.helper.AsyncHttpClientHelper;
+import com.anlystar.common.httprpc.annotation.Async;
 import com.anlystar.common.httprpc.annotation.HttpMethod;
 import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.RequestBody;
@@ -22,6 +30,7 @@ import com.anlystar.common.httprpc.annotation.RequestMethod;
 import com.anlystar.common.httprpc.annotation.RpcParam;
 import com.anlystar.common.httprpc.annotation.URL;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
+import com.anlystar.common.httprpc.model.BaseModel;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -82,9 +91,14 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     @Override
     protected Object handleInvocation(Object proxy, Method method, Object[] args) throws Throwable {
 
-        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
+        Type returnType = method.getGenericReturnType();
 
-        Parameter[] parameters = method.getParameters();
+        Async async = method.getAnnotation(Async.class);
+        if (async != null && !returnType.getClass().equals(Void.class)) {
+            throw new IllegalArgumentException("不支持的返回值");
+        }
+
+        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
 
         RequestMethod requestMethod = RequestMethod.GET;
 
@@ -98,9 +112,118 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("未配置URL地址参数");
         }
 
-        Map<String, String> pars = null;
+        Map<String, String> pars = processPars(proxy, method, args);
+
+        Parameter[] parameters = method.getParameters();
+        if (parameters != null && parameters.length > 0) {
+            for (int i = 0, len = parameters.length; i < len; i++) {
+                Parameter p = parameters[i];
+                if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                    PathVariable pathVariable = p.getAnnotation(PathVariable.class);
+                    if (pathVariable != null) {
+                        String value = args[i] == null ? "" : (args[i] + "");
+                        requestUrl = requestUrl.replace(String.format("{%s}", pathVariable.value()), value);
+                    }
+                }
+            }
+        }
+
+        if (async == null) {
+            String res = execute(requestMethod, requestUrl, pars, args);
+            return OBJECT_MAPPER.readValue(res, TYPE_FACTORY.constructType(method.getGenericReturnType()));
+        } else {
+            executeAsync(requestMethod, requestUrl, pars, args);
+            return null;
+        }
+    }
+
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl,
+                                Map<String, String> pars, Object[] args) {
+        String response = "";
+
+        long start = System.currentTimeMillis();
+
+        String parstr = "";
+        try {
+
+            if (logger.isInfoEnabled()) {
+                parstr = OBJECT_MAPPER.writeValueAsString(pars);
+            }
+
+            FutureCallback<HttpResponse> callback = new FutureCallback<HttpResponse>() {
+                @Override
+                public void completed(HttpResponse result) {
+
+                }
+
+                @Override
+                public void failed(Exception ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+
+                @Override
+                public void cancelled() {
+
+                }
+            };
+
+            if (requestMethod == RequestMethod.GET) {
+                AsyncHttpClientHelper.get(requestUrl, pars, callback);
+            } else if (requestMethod == RequestMethod.POST) {
+                AsyncHttpClientHelper.post(requestUrl, pars, callback);
+            } else {
+                AsyncHttpClientHelper.postJson(requestUrl, args[0], callback);
+            }
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        } finally {
+            long end = System.currentTimeMillis();
+            logger.info("RPC ==> url: {}, pars:{} result: {}, cost: {}ms", requestUrl,
+                    parstr, response, end - start);
+        }
+
+    }
+
+    protected String execute(RequestMethod requestMethod, String requestUrl,
+                             Map<String, String> pars, Object[] args) {
 
         String response = "";
+        String parstr = "";
+        long start = System.currentTimeMillis();
+        try {
+            if (requestMethod == RequestMethod.GET) {
+                response = HttpClientHelper.get(requestUrl, pars);
+            } else if (requestMethod == RequestMethod.POST) {
+                response = HttpClientHelper.post(requestUrl, pars);
+            } else {
+                response = HttpClientHelper.postJson(requestUrl, args[0]);
+            }
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        } finally {
+            long end = System.currentTimeMillis();
+            logger.info("RPC ==> url: {}, pars:{} result: {}, cost: {}ms", requestUrl,
+                    parstr, response, end - start);
+        }
+
+        return response;
+    }
+
+    protected Map<String, String> processPars(Object proxy, Method method, Object[] args) throws Throwable {
+
+        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
+
+        Parameter[] parameters = method.getParameters();
+
+        RequestMethod requestMethod = RequestMethod.GET;
+
+        if (httpMethod != null) {
+            requestMethod = httpMethod.value();
+        }
+
+        Map<String, String> pars = null;
 
         if (parameters != null && parameters.length > 0) {
             if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
@@ -114,60 +237,79 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     if (len == 1) {
                         RequestBody requestBody = p.getAnnotation(RequestBody.class);
                         if (requestBody != null) {
-                            BeanMap beanMap = BeanMap.create(args[0]);
-                            for (Object k : beanMap.keySet()) {
-                                Object v = beanMap.get(k);
-                                if (v != null) {
-                                    pars.put(k + "", v + "");
+                            Map m = BeanUtils.describe(args[0]);
+                            Set s = m.keySet();
+                            for (Object k : s) {
+                                if ("class".equals(k)) {
+                                    continue;
                                 }
+                                String value = convertValue(m.get(k));
+                                pars.put((String) k, value);
                             }
                         }
                         break;
                     }
 
-                    if (!(args[i] instanceof String || isWrapClass(args[i].getClass()))) {
-                        throw new IllegalArgumentException("参数类型只支持String和八种基本数据类型");
-                    }
+                    if (args[i] instanceof Collection) {
+                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
+                        if (rpcParam == null) {
+                            throw new IllegalArgumentException("@RpcParam注解不能为空");
+                        }
 
-                    RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                    if (rpcParam != null) {
-                        String value = args[i] == null ? "" : (args[i] + "");
-                        pars.put(rpcParam.value(), value);
-                        continue;
-                    }
+                        Collection c = (Collection) args[i];
+                        Iterator ite = c.iterator();
+                        int j = 0;
+                        while (ite.hasNext()) {
+                            Object o = ite.next();
+                            if (o instanceof BaseModel) {
+                                Map m = BeanUtils.describe(o);
+                                Set s = m.keySet();
+                                for (Object k : s) {
+                                    if ("class".equals(k)) {
+                                        continue;
+                                    }
+                                    String value = convertValue(m.get(k));
+                                    pars.put(rpcParam.value() + "[" + j + "]." + k, value);
+                                }
+                            } else {
+                                String k = rpcParam.value();
+                                String value = convertValue(o);
+                                if (pars.containsKey(k)) {
+                                    pars.put(k, pars.get(k) + "," + value);
+                                } else {
+                                    pars.put(k, value);
+                                }
+                            }
+                            j++;
+                        }
 
-                    PathVariable pathVariable = p.getAnnotation(PathVariable.class);
+                    } else if (args[i] instanceof BaseModel) {
+                        Map m = BeanUtils.describe(args[i]);
+                        Set s = m.keySet();
+                        for (Object k : s) {
+                            if ("class".equals(k)) {
+                                continue;
+                            }
+                            String value = convertValue(m.get(k));
+                            pars.put((String) k, value);
+                        }
+                    } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
+                        if (rpcParam != null) {
+                            String value = args[i] == null ? "" : (args[i] + "");
+                            pars.put(rpcParam.value(), value);
+                            continue;
+                        }
 
-                    if (pathVariable != null) {
-                        String value = args[i] == null ? "" : (args[i] + "");
-                        requestUrl = requestUrl.replace(String.format("{%s}", pathVariable.value()), value);
+                    } else {
+                        throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
                     }
 
                 }
             }
         }
 
-        long start = System.currentTimeMillis();
-
-        try {
-            if (requestMethod == RequestMethod.GET) {
-                response = HttpClientHelper.get(requestUrl, pars);
-            } else if (requestMethod == RequestMethod.POST) {
-                response = HttpClientHelper.post(requestUrl, pars);
-            } else {
-                response = HttpClientHelper.postJson(requestUrl, args[0]);
-            }
-        } catch (Exception e) {
-            logger.error(e.getMessage(), e);
-            throw e;
-        } finally {
-            long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, pars:{} result: {}, cost: {}ms", requestUrl,
-                    pars != null ? OBJECT_MAPPER.writeValueAsString(pars) : OBJECT_MAPPER.writeValueAsString(args[0]),
-                    response, end - start);
-        }
-
-        return OBJECT_MAPPER.readValue(response, TYPE_FACTORY.constructType(method.getGenericReturnType()));
+        return pars;
     }
 
     /**
@@ -202,6 +344,25 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * 参数值 转换
+     *
+     * @param obj
+     *
+     * @return
+     */
+    protected String convertValue(Object obj) {
+
+        if (obj == null) {
+            return "";
+        } else if (obj instanceof String || isWrapClass(obj.getClass())) {
+            return obj + "";
+        } else {
+            throw new IllegalArgumentException("参数类型只支持八种基本数据类型以及对应的包装类、String、null");
+        }
+
     }
 
 }
