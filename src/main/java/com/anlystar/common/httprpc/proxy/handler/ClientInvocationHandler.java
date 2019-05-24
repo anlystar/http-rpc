@@ -66,7 +66,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     static {
         OBJECT_MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        OBJECT_MAPPER.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+        OBJECT_MAPPER.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         OBJECT_MAPPER.setDateFormat(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
 
         REQUEST_CONFIG = RequestConfig.custom()
@@ -356,7 +356,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     protected String convertValue(Object obj) {
 
         if (obj == null) {
-            return "";
+            return null;
         } else if (obj instanceof String || isWrapClass(obj.getClass())) {
             return obj + "";
         } else {
