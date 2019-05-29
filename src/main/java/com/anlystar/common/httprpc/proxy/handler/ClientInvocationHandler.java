@@ -118,6 +118,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         if (parameters != null && parameters.length > 0) {
             for (int i = 0, len = parameters.length; i < len; i++) {
                 Parameter p = parameters[i];
+                if (args[i] == null) {
+                    continue;
+                }
                 if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
                     PathVariable pathVariable = p.getAnnotation(PathVariable.class);
                     if (pathVariable != null) {
@@ -230,7 +233,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 pars = Maps.newHashMap();
                 for (int i = 0, len = parameters.length; i < len; i++) {
                     Parameter p = parameters[i];
-                    if (p == null) {
+                    if (p == null || args[i] == null) {
                         continue;
                     }
 
