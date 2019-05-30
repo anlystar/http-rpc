@@ -3,20 +3,30 @@
  */
 package com.anlystar.common.httprpc.proxy.handler;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.http.Header;
 import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.concurrent.FutureCallback;
+import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
@@ -29,6 +39,7 @@ import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
 import com.anlystar.common.httprpc.annotation.RpcParam;
 import com.anlystar.common.httprpc.annotation.URL;
+import com.anlystar.common.httprpc.callback.CallbackFuture;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
 import com.anlystar.common.httprpc.model.BaseModel;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -62,6 +73,11 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
      */
     protected final static RequestConfig REQUEST_CONFIG;
 
+    /**
+     * 默认编码
+     */
+    protected final static String DEFAULT_CHARSET = "UTF-8";
+
     private final static TypeFactory TYPE_FACTORY = TypeFactory.defaultInstance();
 
     static {
@@ -91,13 +107,15 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     @Override
     protected Object handleInvocation(Object proxy, Method method, Object[] args) throws Throwable {
 
-        Type returnType = method.getGenericReturnType();
+        Class<?> returnType = method.getReturnType();
 
         Async async = method.getAnnotation(Async.class);
-        if (async != null && !returnType.getClass().equals(Void.class)) {
+        if (async != null
+                && !("void".equals(returnType.getName())
+                             || returnType.equals(Future.class)
+                             || Future.class.isAssignableFrom(returnType))) {
             throw new IllegalArgumentException("不支持的返回值");
         }
-
         HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
 
         RequestMethod requestMethod = RequestMethod.GET;
@@ -133,15 +151,20 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         if (async == null) {
             String res = execute(requestMethod, requestUrl, pars, args);
-            return OBJECT_MAPPER.readValue(res, TYPE_FACTORY.constructType(method.getGenericReturnType()));
+            return convert(res, method);
         } else {
-            executeAsync(requestMethod, requestUrl, pars, args);
-            return null;
+            CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
+            executeAsync(requestMethod, requestUrl, pars, args, callbackFuture, method);
+            if ("void".equals(method.getReturnType().getName())) {
+                return null;
+            } else {
+                return callbackFuture;
+            }
         }
     }
 
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl,
-                                Map<String, String> pars, Object[] args) {
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars, Object[] args,
+                                CallbackFuture<Object> callbackFuture, Method method) {
         String response = "";
 
         long start = System.currentTimeMillis();
@@ -155,18 +178,33 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
             FutureCallback<HttpResponse> callback = new FutureCallback<HttpResponse>() {
                 @Override
-                public void completed(HttpResponse result) {
-
+                public void completed(HttpResponse response) {
+                    try {
+                        if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
+                            String res = EntityUtils.toString(response.getEntity(), getCharset(DEFAULT_CHARSET,
+                                    response));
+                            logger.info("Aysnc Response => " + res);
+                            Object ret = convertAsync(res, method);
+                            callbackFuture.handleResult(ret);
+                        } else {
+                            throw new RuntimeException(
+                                    "http status error: " + response.getStatusLine().getStatusCode());
+                        }
+                    } catch (IOException e) {
+                        logger.error(e.getMessage(), e);
+                        callbackFuture.handleError(e);
+                    }
                 }
 
                 @Override
-                public void failed(Exception ex) {
-                    logger.error(ex.getMessage(), ex);
+                public void failed(Exception e) {
+                    logger.error(e.getMessage(), e);
+                    callbackFuture.handleError(e);
                 }
 
                 @Override
                 public void cancelled() {
-
+                    callbackFuture.cancel(false);
                 }
             };
 
@@ -366,6 +404,89 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("参数类型只支持八种基本数据类型以及对应的包装类、String、null");
         }
 
+    }
+
+    protected String getCharset(String charset, HttpResponse response) {
+
+        if (charset != null && !"".equals(charset)) {
+            return charset;
+        }
+
+        Header contentType = response.getFirstHeader("Content-Type");
+        if (contentType != null) {
+            charset = getCharsetFromContentType(contentType.getValue());
+        }
+
+        return charset == null ? DEFAULT_CHARSET : charset;
+    }
+
+    protected String getCharsetFromContentType(String contentType) {
+        if (contentType == null) {
+            return null;
+        }
+        Pattern charsetPattern = Pattern.compile("(?i)\\bcharset=\\s*\"?([^\\s;\"]*)");
+        Matcher m = charsetPattern.matcher(contentType);
+        if (m.find()) {
+            String charset = m.group(1).trim();
+            if (Charset.isSupported(charset)) {
+                return charset;
+            }
+            charset = charset.toUpperCase(Locale.ENGLISH);
+            if (Charset.isSupported(charset)) {
+                return charset;
+            }
+        }
+        return null;
+    }
+
+    protected <T> T convert(String text, Type type) throws IOException {
+        return OBJECT_MAPPER.readValue(text, TYPE_FACTORY.constructType(type));
+    }
+
+    protected <T> T convert(String text, Class<T> clazz) throws IOException {
+        if (String.class.equals(clazz)) {
+            return (T) text;
+        } else {
+            return OBJECT_MAPPER.readValue(text, clazz);
+        }
+    }
+
+    protected <T> T convert(String text, Method method) throws IOException {
+
+        if ("void".equals(method.getReturnType().getName())) {
+            return null;
+        } else if (String.class.equals(method.getReturnType())) {
+            return (T) convert(text, String.class);
+        } else if (method.getGenericReturnType() instanceof ParameterizedType) {
+            return (T) convert(text, method.getGenericReturnType());
+        } else {
+            return (T) convert(text, method.getReturnType());
+        }
+    }
+
+    protected <T> T convertAsync(String text, Method method) throws IOException {
+        if ("void".equals(method.getReturnType().getName())) {
+            return null;
+        } else if (String.class.equals(method.getReturnType())) {
+            return (T) convert(text, String.class);
+        } else if (method.getReturnType().equals(Future.class)
+                || Future.class.isAssignableFrom(method.getReturnType())) {
+            ParameterizedType returnType = (ParameterizedType) method.getGenericReturnType();
+            Type actualType = returnType.getActualTypeArguments()[0];
+            if (actualType instanceof ParameterizedType) { // 仍然是泛型
+                return (T) convert(text, actualType);
+            } else {
+                if (actualType.equals(String.class)) {
+                    return (T) convert(text, String.class);
+                } else {
+                    return (T) convert(text, actualType.getClass());
+                }
+            }
+        } else if (method.getGenericReturnType() instanceof ParameterizedType) {
+            return (T) convert(text, method.getGenericReturnType());
+        } else {
+            return (T) convert(text, method.getReturnType());
+        }
     }
 
 }
