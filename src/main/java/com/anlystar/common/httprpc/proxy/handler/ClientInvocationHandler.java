@@ -41,6 +41,7 @@ import com.anlystar.common.httprpc.annotation.RpcParam;
 import com.anlystar.common.httprpc.annotation.URL;
 import com.anlystar.common.httprpc.callback.CallbackFuture;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
+import com.anlystar.common.httprpc.helper.ValidationHelper;
 import com.anlystar.common.httprpc.model.BaseModel;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -116,6 +117,11 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                              || Future.class.isAssignableFrom(returnType))) {
             throw new IllegalArgumentException("不支持的返回值");
         }
+
+        if (args != null) {
+            ValidationHelper.validateParameters(proxy, method, args);
+        }
+
         HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
 
         RequestMethod requestMethod = RequestMethod.GET;
