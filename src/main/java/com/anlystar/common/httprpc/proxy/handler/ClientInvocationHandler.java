@@ -138,7 +138,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("未配置URL地址参数");
         }
 
-        Map<String, String> pars = processPars(proxy, method, args);
+        Map<String, String> pars = processPars(method, args);
 
         Parameter[] parameters = method.getParameters();
         if (parameters != null && parameters.length > 0) {
@@ -158,33 +158,23 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         }
 
         if (async == null) {
-            String res = execute(requestMethod, requestUrl, pars, args);
+            String res = execute(requestMethod, requestUrl, pars);
             return convert(res, method);
         } else {
-            boolean hasCallback = false;
             // 处理异步函数
-            if (parameters.length > 0) {
-                Parameter p = parameters[parameters.length - 1];
-                CallFunction function = p.getAnnotation(CallFunction.class);
-                if (function != null) {
-                    if ("void".equals(method.getReturnType().getName())) {
-                        hasCallback = true;
-                    }
-                }
-            }
-
+            boolean hasCallback = hasCallback(method);
             if (hasCallback) {
                 executeAsync(requestMethod, requestUrl, pars, args);
                 return null;
             } else {
                 CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
-                executeAsync(requestMethod, requestUrl, pars, args, callbackFuture, method);
+                executeAsync(requestMethod, requestUrl, pars, callbackFuture, method);
                 return callbackFuture;
             }
         }
     }
 
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars, Object[] args,
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars,
                                 CallbackFuture<Object> callbackFuture, Method method) {
         String response = "";
 
@@ -234,7 +224,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             } else if (requestMethod == RequestMethod.POST) {
                 AsyncHttpClientHelper.post(requestUrl, pars, callback);
             } else {
-                AsyncHttpClientHelper.postJson(requestUrl, args[0], callback);
+                AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
@@ -267,7 +257,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             } else if (requestMethod == RequestMethod.POST) {
                 AsyncHttpClientHelper.post(requestUrl, pars, callback);
             } else {
-                AsyncHttpClientHelper.postJson(requestUrl, args[0], callback);
+                AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
@@ -281,7 +271,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     }
 
     protected String execute(RequestMethod requestMethod, String requestUrl,
-                             Map<String, String> pars, Object[] args) {
+                             Map<String, String> pars) {
 
         String response = "";
         String parstr = "";
@@ -292,7 +282,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             } else if (requestMethod == RequestMethod.POST) {
                 response = HttpClientHelper.post(requestUrl, pars);
             } else {
-                response = HttpClientHelper.postJson(requestUrl, args[0]);
+                response = HttpClientHelper.postJson(requestUrl, pars);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
@@ -306,7 +296,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         return response;
     }
 
-    protected Map<String, String> processPars(Object proxy, Method method, Object[] args) throws Throwable {
+    protected Map<String, String> processPars(Method method, Object[] args) throws Throwable {
 
         Parameter[] parameters = method.getParameters();
         // 处理异步函数
@@ -551,6 +541,38 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         } else {
             return (T) convert(text, method.getReturnType());
         }
+    }
+
+    /**
+     * 判断是否自带callback函数参数
+     * @param method
+     * @return
+     */
+    protected boolean hasCallback(Method method) {
+        Parameter[] parameters = method.getParameters();
+        if (parameters.length > 0) {
+            Parameter p = parameters[parameters.length - 1];
+            CallFunction function = p.getAnnotation(CallFunction.class);
+            if (function != null) {
+                if ("void".equals(method.getReturnType().getName())) {
+                    Type type = p.getParameterizedType();
+                    if (type instanceof ParameterizedType) {
+                        // 强制转型为带参数的泛型类型，
+                        ParameterizedType parameterizedType = (ParameterizedType) type;
+                        if (FutureCallback.class.equals(parameterizedType.getRawType())) {
+                            Type[] types = parameterizedType.getActualTypeArguments();
+                            if (types.length > 0) {
+                                Type actualType = types[0];
+                                if (HttpResponse.class.equals(actualType)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
 
 }
