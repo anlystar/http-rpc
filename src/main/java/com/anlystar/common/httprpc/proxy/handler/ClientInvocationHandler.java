@@ -10,6 +10,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.Locale;
@@ -33,6 +34,7 @@ import org.springframework.core.env.Environment;
 
 import com.anlystar.common.helper.AsyncHttpClientHelper;
 import com.anlystar.common.httprpc.annotation.Async;
+import com.anlystar.common.httprpc.annotation.CallFunction;
 import com.anlystar.common.httprpc.annotation.HttpMethod;
 import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.RequestBody;
@@ -159,11 +161,24 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             String res = execute(requestMethod, requestUrl, pars, args);
             return convert(res, method);
         } else {
-            CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
-            executeAsync(requestMethod, requestUrl, pars, args, callbackFuture, method);
-            if ("void".equals(method.getReturnType().getName())) {
+            boolean hasCallback = false;
+            // 处理异步函数
+            if (parameters.length > 0) {
+                Parameter p = parameters[parameters.length - 1];
+                CallFunction function = p.getAnnotation(CallFunction.class);
+                if (function != null) {
+                    if ("void".equals(method.getReturnType().getName())) {
+                        hasCallback = true;
+                    }
+                }
+            }
+
+            if (hasCallback) {
+                executeAsync(requestMethod, requestUrl, pars, args);
                 return null;
             } else {
+                CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
+                executeAsync(requestMethod, requestUrl, pars, args, callbackFuture, method);
                 return callbackFuture;
             }
         }
@@ -232,6 +247,39 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     }
 
+    // 参数传递callback函数
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars,
+                                Object[] args) {
+
+        long start = System.currentTimeMillis();
+
+        String parstr = "";
+        try {
+
+            if (logger.isInfoEnabled()) {
+                parstr = OBJECT_MAPPER.writeValueAsString(pars);
+            }
+
+            FutureCallback<HttpResponse> callback = (FutureCallback<HttpResponse>) args[args.length - 1];
+
+            if (requestMethod == RequestMethod.GET) {
+                AsyncHttpClientHelper.get(requestUrl, pars, callback);
+            } else if (requestMethod == RequestMethod.POST) {
+                AsyncHttpClientHelper.post(requestUrl, pars, callback);
+            } else {
+                AsyncHttpClientHelper.postJson(requestUrl, args[0], callback);
+            }
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        } finally {
+            long end = System.currentTimeMillis();
+            logger.info("RPC ==> url: {}, pars:{}, cost: {}ms", requestUrl,
+                    parstr, end - start);
+        }
+
+    }
+
     protected String execute(RequestMethod requestMethod, String requestUrl,
                              Map<String, String> pars, Object[] args) {
 
@@ -260,12 +308,22 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     protected Map<String, String> processPars(Object proxy, Method method, Object[] args) throws Throwable {
 
-        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
-
         Parameter[] parameters = method.getParameters();
+        // 处理异步函数
+        if (parameters.length > 0) {
+            Parameter p = parameters[parameters.length - 1];
+            CallFunction function = p.getAnnotation(CallFunction.class);
+            if (function != null) {
+                if (parameters.length > 1) {
+                    parameters = Arrays.copyOfRange(parameters, 0, parameters.length -1);
+                } else {
+                    parameters = new Parameter[0];
+                }
+            }
+        }
 
         RequestMethod requestMethod = RequestMethod.GET;
-
+        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
         if (httpMethod != null) {
             requestMethod = httpMethod.value();
         }
