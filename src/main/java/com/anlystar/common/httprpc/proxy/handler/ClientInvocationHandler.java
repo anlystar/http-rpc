@@ -61,6 +61,7 @@ import com.google.common.reflect.AbstractInvocationHandler;
  * Post 提交方式 参数必须是 String 或 八种基本数据类型，否则抛出异常
  * Created by anliyong on 18/8/23.
  */
+@SuppressWarnings("unchecked")
 public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     /**
@@ -138,7 +139,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("未配置URL地址参数");
         }
 
-        Map<String, String> pars = processPars(method, args);
+        Object pars = processPars(method, args);
 
         Parameter[] parameters = method.getParameters();
         if (parameters != null && parameters.length > 0) {
@@ -174,7 +175,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         }
     }
 
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars,
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars,
                                 CallbackFuture<Object> callbackFuture, Method method) {
         String response = "";
 
@@ -220,9 +221,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             };
 
             if (requestMethod == RequestMethod.GET) {
-                AsyncHttpClientHelper.get(requestUrl, pars, callback);
+                AsyncHttpClientHelper.get(requestUrl, (Map<String, String>) pars, callback);
             } else if (requestMethod == RequestMethod.POST) {
-                AsyncHttpClientHelper.post(requestUrl, pars, callback);
+                AsyncHttpClientHelper.post(requestUrl, (Map<String, String>) pars, callback);
             } else {
                 AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
             }
@@ -238,8 +239,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     }
 
     // 参数传递callback函数
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Map<String, String> pars,
-                                Object[] args) {
+    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars, Object[] args) {
 
         long start = System.currentTimeMillis();
 
@@ -253,9 +253,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             FutureCallback<HttpResponse> callback = (FutureCallback<HttpResponse>) args[args.length - 1];
 
             if (requestMethod == RequestMethod.GET) {
-                AsyncHttpClientHelper.get(requestUrl, pars, callback);
+                AsyncHttpClientHelper.get(requestUrl, (Map<String, String>) pars, callback);
             } else if (requestMethod == RequestMethod.POST) {
-                AsyncHttpClientHelper.post(requestUrl, pars, callback);
+                AsyncHttpClientHelper.post(requestUrl, (Map<String, String>) pars, callback);
             } else {
                 AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
             }
@@ -270,17 +270,16 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     }
 
-    protected String execute(RequestMethod requestMethod, String requestUrl,
-                             Map<String, String> pars) {
+    protected String execute(RequestMethod requestMethod, String requestUrl, Object pars) {
 
         String response = "";
         String parstr = "";
         long start = System.currentTimeMillis();
         try {
             if (requestMethod == RequestMethod.GET) {
-                response = HttpClientHelper.get(requestUrl, pars);
+                response = HttpClientHelper.get(requestUrl, (Map<String, String>) pars);
             } else if (requestMethod == RequestMethod.POST) {
-                response = HttpClientHelper.post(requestUrl, pars);
+                response = HttpClientHelper.post(requestUrl, (Map<String, String>) pars);
             } else {
                 response = HttpClientHelper.postJson(requestUrl, pars);
             }
@@ -296,7 +295,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         return response;
     }
 
-    protected Map<String, String> processPars(Method method, Object[] args) throws Throwable {
+    protected Object processPars(Method method, Object[] args) throws Throwable {
 
         Parameter[] parameters = method.getParameters();
         // 处理异步函数
@@ -305,7 +304,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             CallFunction function = p.getAnnotation(CallFunction.class);
             if (function != null) {
                 if (parameters.length > 1) {
-                    parameters = Arrays.copyOfRange(parameters, 0, parameters.length -1);
+                    parameters = Arrays.copyOfRange(parameters, 0, parameters.length - 1);
                 } else {
                     parameters = new Parameter[0];
                 }
@@ -401,6 +400,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     }
 
                 }
+            } else {
+                return args[0];
             }
         }
 
@@ -545,7 +546,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     /**
      * 判断是否自带callback函数参数
+     *
      * @param method
+     *
      * @return
      */
     protected boolean hasCallback(Method method) {
