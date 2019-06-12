@@ -181,12 +181,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         long start = System.currentTimeMillis();
 
-        String parstr = "";
         try {
-
-            if (logger.isInfoEnabled()) {
-                parstr = OBJECT_MAPPER.writeValueAsString(pars);
-            }
 
             FutureCallback<HttpResponse> callback = new FutureCallback<HttpResponse>() {
                 @Override
@@ -232,8 +227,11 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, pars:{} result: {}, cost: {}ms", requestUrl,
-                    parstr, response, end - start);
+            logger.info("RPC ==> url: {}, method:{}, pars:{}, result: {}, cost: {}ms", requestUrl,
+                    requestMethod.name(),
+                    requestMethod == RequestMethod.POSTJSON ? toJsonString(pars) : toJsonString(pars),
+                    response, end - start);
+
         }
 
     }
@@ -264,8 +262,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, pars:{}, cost: {}ms", requestUrl,
-                    parstr, end - start);
+            logger.info("RPC ==> url: {}, method:{},  pars:{}, cost: {}ms", requestUrl,
+                    requestMethod.name(), toJsonString(pars), end - start);
         }
 
     }
@@ -273,7 +271,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     protected String execute(RequestMethod requestMethod, String requestUrl, Object pars) {
 
         String response = "";
-        String parstr = "";
         long start = System.currentTimeMillis();
         try {
             if (requestMethod == RequestMethod.GET) {
@@ -288,8 +285,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, pars:{} result: {}, cost: {}ms", requestUrl,
-                    parstr, response, end - start);
+            logger.info("RPC ==> url: {}, method:{},  pars:{}, result: {}, cost: {}ms", requestUrl,
+                    requestMethod.name(), toJsonString(pars), response, end - start);
         }
 
         return response;
@@ -576,6 +573,15 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             }
         }
         return false;
+    }
+
+    protected String toJsonString(Object obj) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(obj);
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+        }
+        return "";
     }
 
 }
