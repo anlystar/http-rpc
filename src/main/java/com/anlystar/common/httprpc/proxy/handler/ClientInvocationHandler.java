@@ -8,26 +8,20 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Future;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.concurrent.FutureCallback;
-import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
@@ -188,8 +182,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 public void completed(HttpResponse response) {
                     try {
                         if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
-                            String res = EntityUtils.toString(response.getEntity(), getCharset(DEFAULT_CHARSET,
-                                    response));
+                            String res = AsyncHttpClientHelper.parseResponse(response.getEntity());
                             logger.info("Aysnc Response => " + res);
                             Object ret = convertAsync(res, method);
                             callbackFuture.handleResult(ret);
@@ -456,39 +449,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("参数类型只支持八种基本数据类型以及对应的包装类、String、null");
         }
 
-    }
-
-    protected String getCharset(String charset, HttpResponse response) {
-
-        if (charset != null && !"".equals(charset)) {
-            return charset;
-        }
-
-        Header contentType = response.getFirstHeader("Content-Type");
-        if (contentType != null) {
-            charset = getCharsetFromContentType(contentType.getValue());
-        }
-
-        return charset == null ? DEFAULT_CHARSET : charset;
-    }
-
-    protected String getCharsetFromContentType(String contentType) {
-        if (contentType == null) {
-            return null;
-        }
-        Pattern charsetPattern = Pattern.compile("(?i)\\bcharset=\\s*\"?([^\\s;\"]*)");
-        Matcher m = charsetPattern.matcher(contentType);
-        if (m.find()) {
-            String charset = m.group(1).trim();
-            if (Charset.isSupported(charset)) {
-                return charset;
-            }
-            charset = charset.toUpperCase(Locale.ENGLISH);
-            if (Charset.isSupported(charset)) {
-                return charset;
-            }
-        }
-        return null;
     }
 
     protected <T> T convert(String text, Type type) throws IOException {
