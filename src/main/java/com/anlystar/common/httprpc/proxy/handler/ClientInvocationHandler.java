@@ -216,7 +216,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, method:{}, pars:{}, cost: {}ms", requestUrl,
+            logger.info("Aysnc RPC ==> url: {}, method:{}, pars:{}, cost: {}ms", requestUrl,
                     requestMethod.name(), toJsonString(pars), end - start);
 
         }
@@ -242,7 +242,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, method:{},  pars:{}, cost: {}ms", requestUrl,
+            logger.info("Aysnc RPC ==> url: {}, method:{},  pars:{}, cost: {}ms", requestUrl,
                     requestMethod.name(), toJsonString(pars), end - start);
         }
 
