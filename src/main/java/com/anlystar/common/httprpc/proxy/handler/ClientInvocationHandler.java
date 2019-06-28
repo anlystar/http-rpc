@@ -71,11 +71,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
      */
     protected final static RequestConfig REQUEST_CONFIG;
 
-    /**
-     * 默认编码
-     */
-    protected final static String DEFAULT_CHARSET = "UTF-8";
-
     private final static TypeFactory TYPE_FACTORY = TypeFactory.defaultInstance();
 
     static {
@@ -171,7 +166,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars,
                                 CallbackFuture<Object> callbackFuture, Method method) {
-        String response = "";
 
         long start = System.currentTimeMillis();
 
@@ -183,7 +177,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     try {
                         if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
                             String res = AsyncHttpClientHelper.parseResponse(response.getEntity());
-                            logger.info("Aysnc Response => " + res);
+                            long end = System.currentTimeMillis();
+                            logger.info("Aysnc RPC ==> url: {}, method:{}, pars:{}, result: {}, cost: {}ms", requestUrl,
+                                    requestMethod.name(), toJsonString(pars), res, end - start);
                             Object ret = convertAsync(res, method);
                             callbackFuture.handleResult(ret);
                         } else {
@@ -220,10 +216,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, method:{}, pars:{}, result: {}, cost: {}ms", requestUrl,
-                    requestMethod.name(),
-                    requestMethod == RequestMethod.POSTJSON ? toJsonString(pars) : toJsonString(pars),
-                    response, end - start);
+            logger.info("RPC ==> url: {}, method:{}, pars:{}, cost: {}ms", requestUrl,
+                    requestMethod.name(), toJsonString(pars), end - start);
 
         }
 
@@ -233,14 +227,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
     protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars, Object[] args) {
 
         long start = System.currentTimeMillis();
-
-        String parstr = "";
         try {
-
-            if (logger.isInfoEnabled()) {
-                parstr = OBJECT_MAPPER.writeValueAsString(pars);
-            }
-
             FutureCallback<HttpResponse> callback = (FutureCallback<HttpResponse>) args[args.length - 1];
 
             if (requestMethod == RequestMethod.GET) {
