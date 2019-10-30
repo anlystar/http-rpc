@@ -8,30 +8,34 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-import org.springframework.core.annotation.AliasFor;
-
-@Target({ElementType.METHOD})
+@Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
-public @interface URL {
+public @interface Reference {
 
     /**
-     * 请求url
+     * 支持的请求方法
      *
      * @return
      */
-    String value() default "";
+    RequestMethod method() default RequestMethod.GET;
 
     /**
-     * 请求url
+     * 是否异步请求
      *
      * @return
      */
-    @AliasFor("name") String name() default "";
+    boolean async() default false;
 
     /**
-     * 默认地址
+     * 请求的 URL
      * @return
      */
-    String defaultUrl() default "";
+    String url() default "";
+
+    /**
+     * 从Spring上下文中获取 URL 的 key
+     * @return
+     */
+    String urlKey() default "";
 
 }

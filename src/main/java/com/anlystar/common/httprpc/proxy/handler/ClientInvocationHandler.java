@@ -11,13 +11,13 @@ import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Future;
 
 import org.apache.commons.beanutils.BeanUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
@@ -26,18 +26,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 
-import com.anlystar.common.helper.AsyncHttpClientHelper;
-import com.anlystar.common.httprpc.annotation.Async;
 import com.anlystar.common.httprpc.annotation.CallFunction;
-import com.anlystar.common.httprpc.annotation.HttpMethod;
 import com.anlystar.common.httprpc.annotation.PathVariable;
+import com.anlystar.common.httprpc.annotation.Reference;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
+import com.anlystar.common.httprpc.annotation.RpcHeader;
 import com.anlystar.common.httprpc.annotation.RpcParam;
-import com.anlystar.common.httprpc.annotation.URL;
 import com.anlystar.common.httprpc.callback.CallbackFuture;
+import com.anlystar.common.httprpc.helper.AsyncHttpClientHelper;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
-import com.anlystar.common.httprpc.helper.ValidationHelper;
 import com.anlystar.common.httprpc.model.BaseModel;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -89,8 +87,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 .setRedirectsEnabled(true).build();
     }
 
-    private Logger logger = LoggerFactory.getLogger(getClass());
-
+    protected Logger logger = LoggerFactory.getLogger(getClass());
     private Environment env;
 
     public ClientInvocationHandler(Environment env) {
@@ -102,33 +99,54 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         Class<?> returnType = method.getReturnType();
 
-        Async async = method.getAnnotation(Async.class);
-        if (async != null
-                && !("void".equals(returnType.getName())
-                             || returnType.equals(Future.class)
-                             || Future.class.isAssignableFrom(returnType))) {
+        Reference reference = method.getAnnotation(Reference.class);
+
+        if (reference.async() && !("void".equals(returnType.getName())
+                                           || returnType.equals(Future.class)
+                                           || Future.class.isAssignableFrom(returnType))) {
             throw new IllegalArgumentException("不支持的返回值");
         }
 
-        if (args != null) {
-            ValidationHelper.validateParameters(proxy, method, args);
+        if ("".equals(reference.url()) && "".equals(reference.urlKey())) {
+            throw new IllegalArgumentException("未配置URL信息");
         }
 
-        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
+        String requestUrl = getRequestUrl(method, args, reference);
 
-        RequestMethod requestMethod = RequestMethod.GET;
-
-        if (httpMethod != null) {
-            requestMethod = httpMethod.value();
-        }
-
-        String requestUrl = getUrl(method);
-
-        if (StringUtils.isBlank(requestUrl)) {
-            throw new IllegalArgumentException("未配置URL地址参数");
-        }
+        RequestMethod requestMethod = reference.method();
 
         Object pars = processPars(method, args);
+
+        Map<String, String> headers = processHeaders(method, args);
+
+        if (!reference.async()) {
+            String res = execute(requestMethod, requestUrl, headers, pars);
+            return convert(res, method);
+        } else {
+
+            boolean hasCallback = hasCallback(method);
+            if (hasCallback) {
+                asyncExecute(requestMethod, requestUrl, headers, pars, args);
+                return null;
+            } else {
+                CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
+                asyncExecute(requestMethod, requestUrl, headers, pars, callbackFuture, method);
+                return callbackFuture;
+            }
+        }
+    }
+
+    protected String getRequestUrl(Method method, Object[] args, Reference reference) {
+
+        String requestUrl = reference.url();
+
+        if ("".equals(requestUrl)) {
+            requestUrl = env.getProperty(reference.urlKey());
+        }
+
+        if (requestUrl == null || "".equals(requestUrl)) {
+            throw new IllegalArgumentException("未查询到 URL 配置信息, key => " + reference.urlKey());
+        }
 
         Parameter[] parameters = method.getParameters();
         if (parameters != null && parameters.length > 0) {
@@ -146,26 +164,11 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 }
             }
         }
-
-        if (async == null) {
-            String res = execute(requestMethod, requestUrl, pars);
-            return convert(res, method);
-        } else {
-            // 处理异步函数
-            boolean hasCallback = hasCallback(method);
-            if (hasCallback) {
-                executeAsync(requestMethod, requestUrl, pars, args);
-                return null;
-            } else {
-                CallbackFuture<Object> callbackFuture = new CallbackFuture<>();
-                executeAsync(requestMethod, requestUrl, pars, callbackFuture, method);
-                return callbackFuture;
-            }
-        }
+        return requestUrl;
     }
 
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars,
-                                CallbackFuture<Object> callbackFuture, Method method) {
+    protected void asyncExecute(RequestMethod requestMethod, String requestUrl, Map<String, String> headers,
+                                Object pars, CallbackFuture<Object> callbackFuture, Method method) {
 
         long start = System.currentTimeMillis();
 
@@ -176,10 +179,11 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 public void completed(HttpResponse response) {
                     try {
                         if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
-                            String res = AsyncHttpClientHelper.parseResponse(response.getEntity());
+                            String res = AsyncHttpClientHelper.parseResponse(response);
                             long end = System.currentTimeMillis();
-                            logger.info("Aysnc RPC ==> url: {}, method:{}, pars:{}, result: {}, cost: {}ms", requestUrl,
-                                    requestMethod.name(), toJsonString(pars), res, end - start);
+                            logger.info("Aysnc RPC ==> url: {}, method: {}, header: {}, pars: {}, result: {}, "
+                                            + "cost: {}ms", requestUrl,
+                                    requestMethod.name(), toJsonString(headers), toJsonString(pars), res, end - start);
                             Object ret = convertAsync(res, method);
                             callbackFuture.handleResult(ret);
                         } else {
@@ -205,7 +209,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             };
 
             if (requestMethod == RequestMethod.GET) {
-                AsyncHttpClientHelper.get(requestUrl, (Map<String, String>) pars, callback);
+                AsyncHttpClientHelper.get(requestUrl, headers, (Map<String, String>) pars, callback);
             } else if (requestMethod == RequestMethod.POST) {
                 AsyncHttpClientHelper.post(requestUrl, (Map<String, String>) pars, callback);
             } else {
@@ -216,64 +220,123 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("Aysnc RPC ==> url: {}, method:{}, pars:{}, cost: {}ms", requestUrl,
-                    requestMethod.name(), toJsonString(pars), end - start);
-
+            logger.info("Aysnc RPC ==> url: {}, method: {}, header: {}, pars:{}, cost: {}ms", requestUrl,
+                    requestMethod.name(), toJsonString(headers), toJsonString(pars), end - start);
         }
 
     }
 
-    // 参数传递callback函数
-    protected void executeAsync(RequestMethod requestMethod, String requestUrl, Object pars, Object[] args) {
+    protected void asyncExecute(RequestMethod requestMethod, String requestUrl, Map<String, String> headers,
+                                Object pars, Object[] args) {
 
         long start = System.currentTimeMillis();
+
         try {
+
             FutureCallback<HttpResponse> callback = (FutureCallback<HttpResponse>) args[args.length - 1];
 
             if (requestMethod == RequestMethod.GET) {
-                AsyncHttpClientHelper.get(requestUrl, (Map<String, String>) pars, callback);
+                AsyncHttpClientHelper.get(requestUrl, headers, (Map<String, String>) pars, callback);
             } else if (requestMethod == RequestMethod.POST) {
-                AsyncHttpClientHelper.post(requestUrl, (Map<String, String>) pars, callback);
+                AsyncHttpClientHelper.post(requestUrl, headers, (Map<String, String>) pars, callback);
             } else {
-                AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
+                AsyncHttpClientHelper.postJson(requestUrl, headers, pars, callback);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("Aysnc RPC ==> url: {}, method:{},  pars:{}, cost: {}ms", requestUrl,
-                    requestMethod.name(), toJsonString(pars), end - start);
+            logger.info("Aysnc RPC ==> url: {}, header: {}, pars:{}, cost: {}ms", requestUrl, toJsonString(headers),
+                    toJsonString(pars), end - start);
         }
 
     }
 
-    protected String execute(RequestMethod requestMethod, String requestUrl, Object pars) {
+    protected String execute(RequestMethod requestMethod, String requestUrl, Map<String, String> headers, Object pars) {
 
         String response = "";
+
         long start = System.currentTimeMillis();
+
         try {
+
             if (requestMethod == RequestMethod.GET) {
-                response = HttpClientHelper.get(requestUrl, (Map<String, String>) pars);
+                response = HttpClientHelper.get(requestUrl, headers, (Map<String, String>) pars);
             } else if (requestMethod == RequestMethod.POST) {
-                response = HttpClientHelper.post(requestUrl, (Map<String, String>) pars);
+                response = HttpClientHelper.post(requestUrl, headers, (Map<String, String>) pars);
             } else {
-                response = HttpClientHelper.postJson(requestUrl, pars);
+                response = HttpClientHelper.postJson(requestUrl, headers, pars);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e);
         } finally {
             long end = System.currentTimeMillis();
-            logger.info("RPC ==> url: {}, method:{},  pars:{}, result: {}, cost: {}ms", requestUrl,
-                    requestMethod.name(), toJsonString(pars), response, end - start);
+            logger.info("RPC ==> url: {}, method: {}, header: {}, pars: {}, result: {}, cost: {}ms", requestUrl,
+                    requestMethod.name(), toJsonString(headers), toJsonString(pars), response, end - start);
+        }
+        return response;
+
+    }
+
+    protected Map<String, String> processHeaders(Method method, Object[] args) throws Throwable {
+
+        Map<String, String> headers = new HashMap<>();
+
+        RpcHeader[] rpcHeaders = method.getAnnotationsByType(RpcHeader.class);
+
+        if (rpcHeaders != null || rpcHeaders.length > 0) {
+            for (RpcHeader rpcHeader : rpcHeaders) {
+                headers.put(rpcHeader.key(), rpcHeader.value());
+            }
         }
 
-        return response;
+        Parameter[] parameters = method.getParameters();
+        Reference reference = method.getAnnotation(Reference.class);
+        RequestMethod requestMethod = reference.method();
+
+        if (parameters != null && parameters.length > 0) {
+            if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
+                for (int i = 0, len = parameters.length; i < len; i++) {
+                    Parameter p = parameters[i];
+                    if (p == null || args[i] == null || p.getAnnotation(RpcHeader.class) != null) {
+                        continue;
+                    }
+
+                    RequestBody requestBody = p.getAnnotation(RequestBody.class);
+                    if (requestBody != null && requestBody.header()) {
+                        Map m = BeanUtils.describe(args[0]);
+                        Set s = m.keySet();
+                        for (Object k : s) {
+                            if ("class".equals(k)) {
+                                continue;
+                            }
+                            String value = convertValue(m.get(k));
+                            headers.put((String) k, value);
+                        }
+                    }
+
+                    if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
+                        if (rpcParam != null && rpcParam.header()) {
+                            String value = args[i] == null ? "" : (args[i] + "");
+                            headers.put(rpcParam.value(), value);
+                            continue;
+                        }
+                    } else {
+                        throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
+                    }
+                }
+            }
+        }
+
+        return headers;
     }
 
     protected Object processPars(Method method, Object[] args) throws Throwable {
 
+        Map<String, String> pars = null;
         Parameter[] parameters = method.getParameters();
         // 处理异步函数
         if (parameters.length > 0) {
@@ -288,43 +351,35 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             }
         }
 
-        RequestMethod requestMethod = RequestMethod.GET;
-        HttpMethod httpMethod = method.getAnnotation(HttpMethod.class);
-        if (httpMethod != null) {
-            requestMethod = httpMethod.value();
-        }
-
-        Map<String, String> pars = null;
+        Reference reference = method.getAnnotation(Reference.class);
+        RequestMethod requestMethod = reference.method();
 
         if (parameters != null && parameters.length > 0) {
             if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
                 pars = Maps.newHashMap();
                 for (int i = 0, len = parameters.length; i < len; i++) {
                     Parameter p = parameters[i];
-                    if (p == null || args[i] == null) {
+                    if (p == null || args[i] == null || p.getAnnotation(RpcHeader.class) != null) {
                         continue;
                     }
 
-                    if (len == 1) {
-                        RequestBody requestBody = p.getAnnotation(RequestBody.class);
-                        if (requestBody != null) {
-                            Map m = BeanUtils.describe(args[0]);
-                            Set s = m.keySet();
-                            for (Object k : s) {
-                                if ("class".equals(k)) {
-                                    continue;
-                                }
-                                String value = convertValue(m.get(k));
-                                pars.put((String) k, value);
+                    RequestBody requestBody = p.getAnnotation(RequestBody.class);
+                    if (requestBody != null && !requestBody.header()) {
+                        Map m = BeanUtils.describe(args[0]);
+                        Set s = m.keySet();
+                        for (Object k : s) {
+                            if ("class".equals(k)) {
+                                continue;
                             }
+                            String value = convertValue(m.get(k));
+                            pars.put((String) k, value);
                         }
-                        break;
                     }
 
                     if (args[i] instanceof Collection) {
                         RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                        if (rpcParam == null) {
-                            throw new IllegalArgumentException("@RpcParam注解不能为空");
+                        if (rpcParam == null || rpcParam.header()) {
+                            continue;
                         }
 
                         Collection c = (Collection) args[i];
@@ -366,16 +421,14 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                         }
                     } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
                         RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                        if (rpcParam != null) {
+                        if (rpcParam != null && !rpcParam.header()) {
                             String value = args[i] == null ? "" : (args[i] + "");
                             pars.put(rpcParam.value(), value);
                             continue;
                         }
-
                     } else {
                         throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
                     }
-
                 }
             } else {
                 return args[0];
@@ -383,31 +436,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         }
 
         return pars;
-    }
-
-    /**
-     * 获取 请求url
-     *
-     * @param method
-     *
-     * @return
-     */
-    protected String getUrl(Method method) {
-
-        String requestUrl = null;
-
-        URL url = method.getAnnotation(URL.class);
-        if (url == null) {
-            return requestUrl;
-        }
-
-        requestUrl = env.getProperty(url.value());
-
-        if (requestUrl == null || "".equals(requestUrl)) {
-            requestUrl = url.defaultUrl();
-        }
-
-        return requestUrl;
 
     }
 
@@ -530,5 +558,4 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         }
         return "";
     }
-
 }

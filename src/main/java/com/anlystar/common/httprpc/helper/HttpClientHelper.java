@@ -3,6 +3,7 @@
  */
 package com.anlystar.common.httprpc.helper;
 
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
@@ -13,6 +14,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.http.Header;
+import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -28,11 +30,8 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.type.TypeFactory;
 
 public abstract class HttpClientHelper {
-
-    protected static Logger logger = LoggerFactory.getLogger(HttpClientHelper.class);
 
     /**
      * jackson
@@ -41,7 +40,7 @@ public abstract class HttpClientHelper {
     /**
      * http client
      */
-    protected final static CloseableHttpClient HTTP_CLIENT = HttpClientBuilder.create().build();
+    protected final static CloseableHttpClient HTTP_CLIENT;
     /**
      * 超时时间
      */
@@ -56,12 +55,11 @@ public abstract class HttpClientHelper {
      */
     protected final static String DEFAULT_CHARSET = "UTF-8";
 
-    //
-    private final static TypeFactory TYPE_FACTORY = TypeFactory.defaultInstance();
+    protected static Logger logger = LoggerFactory.getLogger(HttpClientHelper.class);
 
     static {
         OBJECT_MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        OBJECT_MAPPER.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+        OBJECT_MAPPER.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         OBJECT_MAPPER.setDateFormat(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
 
         REQUEST_CONFIG = RequestConfig.custom()
@@ -73,12 +71,18 @@ public abstract class HttpClientHelper {
                 .setSocketTimeout(TIMEOUT)
                 // 设置是否允许重定向(默认为true)
                 .setRedirectsEnabled(true).build();
+
+        HTTP_CLIENT = HttpClientBuilder.create().build();
+
     }
 
     /**
      * 处理 GET 请求
+     *
      * @param url
+     *
      * @return
+     *
      * @throws Exception
      */
     public static String get(String url) throws Exception {
@@ -87,9 +91,12 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 GET 请求
+     *
      * @param url
      * @param pars
+     *
      * @return
+     *
      * @throws Exception
      */
     public static String get(String url, Map<String, String> pars) throws Exception {
@@ -98,19 +105,40 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 GET 请求
+     *
+     * @param url
+     * @param pars
+     *
+     * @return
+     *
+     * @throws Exception
+     */
+    public static String get(String url, Map<String, String> headers, Map<String, String> pars) throws Exception {
+        return get(url, headers, pars, null);
+    }
+
+    /**
+     * 处理 GET 请求
+     *
      * @param url
      * @param headers
      * @param pars
      * @param charset
+     *
      * @return
+     *
      * @throws Exception
      */
-    public static String get(String url, Map<String, String> headers, Map<String, String> pars, String charset) throws Exception {
+    public static String get(String url, Map<String, String> headers, Map<String, String> pars, String charset)
+            throws Exception {
         // 参数
         StringJoiner joiner = new StringJoiner("&");
 
         if (pars != null && !pars.isEmpty()) {
             pars.forEach((k, v) -> {
+                if (v == null) {
+                    return;
+                }
                 try {
                     joiner.add(String.format("%s=%s", k, URLEncoder.encode(v, "utf-8")));
                 } catch (Exception e) {
@@ -133,12 +161,7 @@ public abstract class HttpClientHelper {
 
         // 响应模型
         try (CloseableHttpResponse response = HTTP_CLIENT.execute(httpGet)) {
-            // 从响应模型中获取响应实体
-            if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
-                return EntityUtils.toString(response.getEntity(), getCharset(charset, response));
-            } else {
-                throw new RuntimeException("http status error: " + response.getStatusLine().getStatusCode());
-            }
+            return parseResponse(response);
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             throw e;
@@ -147,9 +170,12 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 POST 请求
+     *
      * @param url
      * @param pars
+     *
      * @return
+     *
      * @throws Exception
      */
     public static String post(String url, Map<String, String> pars) throws Exception {
@@ -158,19 +184,41 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 POST 请求
+     *
+     * @param url
+     * @param pars
+     *
+     * @return
+     *
+     * @throws Exception
+     */
+    public static String post(String url, Map<String, String> headers, Map<String, String> pars) throws Exception {
+        return post(url, headers, pars, null);
+    }
+
+    /**
+     * 处理 POST 请求
+     *
      * @param url
      * @param headers
      * @param pars
      * @param charset
+     *
      * @return
+     *
      * @throws Exception
      */
-    public static String post(String url, Map<String, String> headers, Map<String, String> pars, String charset) throws Exception {
+    public static String post(String url, Map<String, String> headers, Map<String, String> pars, String charset)
+            throws Exception {
         // 参数
         StringJoiner joiner = new StringJoiner("&");
 
         if (pars != null && !pars.isEmpty()) {
-            pars.forEach((k, v) -> joiner.add(k + "=" + v));
+            pars.forEach((k, v) -> {
+                if (v != null) {
+                    joiner.add(k + "=" + v);
+                }
+            });
         }
 
         // 创建Post请求
@@ -191,12 +239,7 @@ public abstract class HttpClientHelper {
 
         // 响应模型
         try (CloseableHttpResponse response = HTTP_CLIENT.execute(httpPost)) {
-            // 从响应模型中获取响应实体
-            if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
-                return EntityUtils.toString(response.getEntity(), getCharset(charset, response));
-            } else {
-                throw new RuntimeException("http status error: " + response.getStatusLine().getStatusCode());
-            }
+            return parseResponse(response);
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             throw e;
@@ -205,9 +248,12 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 PostJson 请求
+     *
      * @param url
      * @param json
+     *
      * @return
+     *
      * @throws Exception
      */
     public static String postJson(String url, Object json) throws Exception {
@@ -216,14 +262,32 @@ public abstract class HttpClientHelper {
 
     /**
      * 处理 PostJson 请求
+     *
+     * @param url
+     * @param json
+     *
+     * @return
+     *
+     * @throws Exception
+     */
+    public static String postJson(String url, Map<String, String> headers, Object json) throws Exception {
+        return postJson(url, headers, json, null);
+    }
+
+    /**
+     * 处理 PostJson 请求
+     *
      * @param url
      * @param headers
      * @param json
      * @param charset
+     *
      * @return
+     *
      * @throws Exception
      */
-    public static String postJson(String url, Map<String, String> headers, Object json, String charset) throws Exception {
+    public static String postJson(String url, Map<String, String> headers, Object json, String charset)
+            throws Exception {
 
         // 创建POST请求
         HttpPost httpPost = new HttpPost(url);
@@ -243,19 +307,14 @@ public abstract class HttpClientHelper {
 
         // 响应模型
         try (CloseableHttpResponse response = HTTP_CLIENT.execute(httpPost)) {
-            // 从响应模型中获取响应实体
-            if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
-                return EntityUtils.toString(response.getEntity(), getCharset(charset, response));
-            } else {
-                throw new RuntimeException("http status error: " + response.getStatusLine().getStatusCode());
-            }
+            return parseResponse(response);
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             throw e;
         }
     }
 
-    protected static String getCharset(String charset, CloseableHttpResponse response) {
+    protected static String getCharset(String charset, HttpResponse response) {
 
         if (charset != null && !"".equals(charset)) {
             return charset;
@@ -286,6 +345,15 @@ public abstract class HttpClientHelper {
             }
         }
         return null;
+    }
+
+    protected static String parseResponse(HttpResponse response) throws IOException {
+        if (HttpStatus.SC_OK == response.getStatusLine().getStatusCode()) {
+            return EntityUtils.toString(response.getEntity(), getCharset(null, response));
+        } else {
+            throw new RuntimeException(
+                    "http status error: " + response.getStatusLine().getStatusCode());
+        }
     }
 
 }

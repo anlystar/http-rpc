@@ -15,4 +15,10 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface RequestBody {
 
+    /**
+     * 是否在 header 中
+     * @return
+     */
+    boolean header() default false;
+
 }
