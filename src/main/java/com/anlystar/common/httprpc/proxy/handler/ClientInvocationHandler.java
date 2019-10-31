@@ -286,7 +286,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         RpcHeader[] rpcHeaders = method.getAnnotationsByType(RpcHeader.class);
 
-        if (rpcHeaders != null || rpcHeaders.length > 0) {
+        if (rpcHeaders != null && rpcHeaders.length > 0) {
             for (RpcHeader rpcHeader : rpcHeaders) {
                 headers.put(rpcHeader.key(), rpcHeader.value());
             }
