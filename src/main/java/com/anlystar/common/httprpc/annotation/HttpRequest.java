@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
 
 @Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
-public @interface Reference {
+public @interface HttpRequest {
 
     /**
      * 支持的请求方法

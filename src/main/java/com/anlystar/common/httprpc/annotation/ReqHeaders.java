@@ -13,8 +13,8 @@ import java.lang.annotation.Target;
  */
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
-public @interface RpcHeaders {
+public @interface ReqHeaders {
 
-    RpcHeader[] value();
+    ReqHeader[] value();
 
 }

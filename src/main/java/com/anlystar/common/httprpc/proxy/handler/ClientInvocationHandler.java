@@ -28,11 +28,11 @@ import org.springframework.core.env.Environment;
 
 import com.anlystar.common.httprpc.annotation.CallFunction;
 import com.anlystar.common.httprpc.annotation.PathVariable;
-import com.anlystar.common.httprpc.annotation.Reference;
+import com.anlystar.common.httprpc.annotation.HttpRequest;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
-import com.anlystar.common.httprpc.annotation.RpcHeader;
-import com.anlystar.common.httprpc.annotation.RpcParam;
+import com.anlystar.common.httprpc.annotation.ReqHeader;
+import com.anlystar.common.httprpc.annotation.ReqParam;
 import com.anlystar.common.httprpc.callback.CallbackFuture;
 import com.anlystar.common.httprpc.helper.AsyncHttpClientHelper;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
@@ -49,7 +49,7 @@ import com.google.common.reflect.AbstractInvocationHandler;
  * <p>
  * postJson 方式的提交 仅支持一个参数，多个参数会忽略除第一个之外的参数
  * <p>
- * Post 提交方式 方法参数必须带 {@link RpcParam} 或 {@link PathVariable} 注解， 不带该注解的不解析
+ * Post 提交方式 方法参数必须带 {@link ReqParam} 或 {@link PathVariable} 注解， 不带该注解的不解析
  * Post 提交方式 参数必须是 String 或 八种基本数据类型，否则抛出异常
  * Created by anliyong on 18/8/23.
  */
@@ -99,27 +99,27 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         Class<?> returnType = method.getReturnType();
 
-        Reference reference = method.getAnnotation(Reference.class);
+        HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
 
-        if (reference.async() && !("void".equals(returnType.getName())
+        if (httpRequest.async() && !("void".equals(returnType.getName())
                                            || returnType.equals(Future.class)
                                            || Future.class.isAssignableFrom(returnType))) {
             throw new IllegalArgumentException("不支持的返回值");
         }
 
-        if ("".equals(reference.url()) && "".equals(reference.urlKey())) {
+        if ("".equals(httpRequest.url()) && "".equals(httpRequest.urlKey())) {
             throw new IllegalArgumentException("未配置URL信息");
         }
 
-        String requestUrl = getRequestUrl(method, args, reference);
+        String requestUrl = getRequestUrl(method, args, httpRequest);
 
-        RequestMethod requestMethod = reference.method();
+        RequestMethod requestMethod = httpRequest.method();
 
         Object pars = processPars(method, args);
 
         Map<String, String> headers = processHeaders(method, args);
 
-        if (!reference.async()) {
+        if (!httpRequest.async()) {
             String res = execute(requestMethod, requestUrl, headers, pars);
             return convert(res, method);
         } else {
@@ -136,16 +136,16 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         }
     }
 
-    protected String getRequestUrl(Method method, Object[] args, Reference reference) {
+    protected String getRequestUrl(Method method, Object[] args, HttpRequest httpRequest) {
 
-        String requestUrl = reference.url();
+        String requestUrl = httpRequest.url();
 
         if ("".equals(requestUrl)) {
-            requestUrl = env.getProperty(reference.urlKey());
+            requestUrl = env.getProperty(httpRequest.urlKey());
         }
 
         if (requestUrl == null || "".equals(requestUrl)) {
-            throw new IllegalArgumentException("未查询到 URL 配置信息, key => " + reference.urlKey());
+            throw new IllegalArgumentException("未查询到 URL 配置信息, key => " + httpRequest.urlKey());
         }
 
         Parameter[] parameters = method.getParameters();
@@ -284,23 +284,23 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         Map<String, String> headers = new HashMap<>();
 
-        RpcHeader[] rpcHeaders = method.getAnnotationsByType(RpcHeader.class);
+        ReqHeader[] reqHeaders = method.getAnnotationsByType(ReqHeader.class);
 
-        if (rpcHeaders != null && rpcHeaders.length > 0) {
-            for (RpcHeader rpcHeader : rpcHeaders) {
-                headers.put(rpcHeader.key(), rpcHeader.value());
+        if (reqHeaders != null && reqHeaders.length > 0) {
+            for (ReqHeader reqHeader : reqHeaders) {
+                headers.put(reqHeader.key(), reqHeader.value());
             }
         }
 
         Parameter[] parameters = method.getParameters();
-        Reference reference = method.getAnnotation(Reference.class);
-        RequestMethod requestMethod = reference.method();
+        HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
+        RequestMethod requestMethod = httpRequest.method();
 
         if (parameters != null && parameters.length > 0) {
             if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
                 for (int i = 0, len = parameters.length; i < len; i++) {
                     Parameter p = parameters[i];
-                    if (p == null || args[i] == null || p.getAnnotation(RpcHeader.class) != null) {
+                    if (p == null || args[i] == null || p.getAnnotation(ReqHeader.class) != null) {
                         continue;
                     }
 
@@ -318,10 +318,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     }
 
                     if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
-                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                        if (rpcParam != null && rpcParam.header()) {
+                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                        if (reqParam != null && reqParam.header()) {
                             String value = args[i] == null ? "" : (args[i] + "");
-                            headers.put(rpcParam.value(), value);
+                            headers.put(reqParam.value(), value);
                             continue;
                         }
                     } else {
@@ -351,15 +351,15 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             }
         }
 
-        Reference reference = method.getAnnotation(Reference.class);
-        RequestMethod requestMethod = reference.method();
+        HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
+        RequestMethod requestMethod = httpRequest.method();
 
         if (parameters != null && parameters.length > 0) {
             if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
                 pars = Maps.newHashMap();
                 for (int i = 0, len = parameters.length; i < len; i++) {
                     Parameter p = parameters[i];
-                    if (p == null || args[i] == null || p.getAnnotation(RpcHeader.class) != null) {
+                    if (p == null || args[i] == null || p.getAnnotation(ReqHeader.class) != null) {
                         continue;
                     }
 
@@ -377,8 +377,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     }
 
                     if (args[i] instanceof Collection) {
-                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                        if (rpcParam == null || rpcParam.header()) {
+                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                        if (reqParam == null || reqParam.header()) {
                             continue;
                         }
 
@@ -395,10 +395,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                                         continue;
                                     }
                                     String value = convertValue(m.get(k));
-                                    pars.put(rpcParam.value() + "[" + j + "]." + k, value);
+                                    pars.put(reqParam.value() + "[" + j + "]." + k, value);
                                 }
                             } else {
-                                String k = rpcParam.value();
+                                String k = reqParam.value();
                                 String value = convertValue(o);
                                 if (pars.containsKey(k)) {
                                     pars.put(k, pars.get(k) + "," + value);
@@ -420,10 +420,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                             pars.put((String) k, value);
                         }
                     } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
-                        RpcParam rpcParam = p.getAnnotation(RpcParam.class);
-                        if (rpcParam != null && !rpcParam.header()) {
+                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                        if (reqParam != null && !reqParam.header()) {
                             String value = args[i] == null ? "" : (args[i] + "");
-                            pars.put(rpcParam.value(), value);
+                            pars.put(reqParam.value(), value);
                             continue;
                         }
                     } else {
