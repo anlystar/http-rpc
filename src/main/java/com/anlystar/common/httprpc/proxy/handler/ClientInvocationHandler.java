@@ -284,7 +284,15 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         Map<String, String> headers = new HashMap<>();
 
-        ReqHeader[] reqHeaders = method.getAnnotationsByType(ReqHeader.class);
+        ReqHeader[] reqHeaders = method.getDeclaringClass().getAnnotationsByType(ReqHeader.class);
+
+        if (reqHeaders != null && reqHeaders.length > 0) {
+            for (ReqHeader reqHeader : reqHeaders) {
+                headers.put(reqHeader.key(), reqHeader.value());
+            }
+        }
+
+        reqHeaders = method.getAnnotationsByType(ReqHeader.class);
 
         if (reqHeaders != null && reqHeaders.length > 0) {
             for (ReqHeader reqHeader : reqHeaders) {

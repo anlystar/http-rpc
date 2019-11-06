@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
 /**
  * Created by anliyong on 19/10/24.
  */
-@Target({ElementType.METHOD})
+@Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
 @Repeatable(ReqHeaders.class)
 public @interface ReqHeader {
