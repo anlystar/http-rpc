@@ -313,7 +313,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     }
 
                     RequestBody requestBody = p.getAnnotation(RequestBody.class);
-                    if (requestBody != null && requestBody.header()) {
+                    if (requestBody != null) {
+                        if (!requestBody.header()) {
+                            continue;
+                        }
                         Map m = BeanUtils.describe(args[0]);
                         Set s = m.keySet();
                         for (Object k : s) {
@@ -328,7 +331,6 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                         if (reqParam != null && reqParam.header()) {
                             String value = args[i] == null ? "" : (args[i] + "");
                             headers.put(reqParam.value(), value);
-                            continue;
                         }
                     } else {
                         throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
