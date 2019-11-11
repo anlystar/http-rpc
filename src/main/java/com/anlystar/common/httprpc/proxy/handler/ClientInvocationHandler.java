@@ -308,12 +308,13 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
                 for (int i = 0, len = parameters.length; i < len; i++) {
                     Parameter p = parameters[i];
-                    if (p == null || args[i] == null || p.getAnnotation(ReqHeader.class) == null) {
+                    if (p == null || args[i] == null) {
                         continue;
                     }
 
-                    if (args[i] instanceof BaseModel) {
-                        Map m = BeanUtils.describe(args[i]);
+                    RequestBody requestBody = p.getAnnotation(RequestBody.class);
+                    if (requestBody != null && requestBody.header()) {
+                        Map m = BeanUtils.describe(args[0]);
                         Set s = m.keySet();
                         for (Object k : s) {
                             if ("class".equals(k)) {
