@@ -9,15 +9,20 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.concurrent.Future;
 
 import org.apache.commons.beanutils.BeanUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
@@ -26,9 +31,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 
+import com.anlystar.common.helper.RSAHelper;
 import com.anlystar.common.httprpc.annotation.CallFunction;
 import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.HttpRequest;
+import com.anlystar.common.httprpc.annotation.ReqSign;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
 import com.anlystar.common.httprpc.annotation.ReqHeader;
@@ -117,7 +124,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
         Object pars = processPars(method, args);
 
-        Map<String, String> headers = processHeaders(method, args);
+        Map<String, String> headers = processHeaders(method, args, pars);
 
         if (!httpRequest.async()) {
             String res = execute(requestMethod, requestUrl, headers, pars);
@@ -211,9 +218,9 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             if (requestMethod == RequestMethod.GET) {
                 AsyncHttpClientHelper.get(requestUrl, headers, (Map<String, String>) pars, callback);
             } else if (requestMethod == RequestMethod.POST) {
-                AsyncHttpClientHelper.post(requestUrl, (Map<String, String>) pars, callback);
+                AsyncHttpClientHelper.post(requestUrl, headers, (Map<String, String>) pars, callback);
             } else {
-                AsyncHttpClientHelper.postJson(requestUrl, pars, callback);
+                AsyncHttpClientHelper.postJson(requestUrl, headers, pars, callback);
             }
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
@@ -280,7 +287,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
 
     }
 
-    protected Map<String, String> processHeaders(Method method, Object[] args) throws Throwable {
+    protected Map<String, String> processHeaders(Method method, Object[] args, Object pars) throws Throwable {
 
         Map<String, String> headers = new HashMap<>();
 
@@ -300,42 +307,47 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             }
         }
 
+        String sign = null;
+        ReqSign reqSign = null;
+
         Parameter[] parameters = method.getParameters();
-        HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
-        RequestMethod requestMethod = httpRequest.method();
+        if (parameters == null || parameters.length == 0) {
+            return headers;
+        }
 
-        if (parameters != null && parameters.length > 0) {
-            if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
-                for (int i = 0, len = parameters.length; i < len; i++) {
-                    Parameter p = parameters[i];
-                    if (p == null || args[i] == null) {
-                        continue;
-                    }
+        for (int i = 0, len = parameters.length; i < len; i++) {
+            Parameter p = parameters[i];
+            if (p == null || args[i] == null) {
+                continue;
+            }
 
-                    RequestBody requestBody = p.getAnnotation(RequestBody.class);
-                    if (requestBody != null) {
-                        if (!requestBody.header()) {
-                            continue;
-                        }
-                        Map m = BeanUtils.describe(args[0]);
-                        Set s = m.keySet();
-                        for (Object k : s) {
-                            if ("class".equals(k)) {
-                                continue;
-                            }
-                            String value = convertValue(m.get(k));
-                            headers.put((String) k, value);
-                        }
-                    } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
-                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
-                        if (reqParam != null && reqParam.header()) {
-                            String value = args[i] == null ? "" : (args[i] + "");
-                            headers.put(reqParam.value(), value);
-                        }
-                    } else {
-                        throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
-                    }
+            RequestBody requestBody = p.getAnnotation(RequestBody.class);
+            if (requestBody != null) {
+                if (!requestBody.header()) {
+                    continue;
                 }
+                headers.putAll(convert2Map((BaseModel) args[i]));
+            } else if (args[i] instanceof String && p.getAnnotation(ReqSign.class) != null) {
+                sign = (String) args[i];
+                reqSign = p.getAnnotation(ReqSign.class);
+            } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                if (reqParam != null && reqParam.header()) {
+                    String value = args[i] == null ? "" : (args[i] + "");
+                    headers.put(reqParam.value(), value);
+                }
+            } else {
+                throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
+            }
+        }
+
+        if (sign != null && reqSign != null) {
+            HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
+            String stamp = headers.get("stamp");
+            if (httpRequest.method() == RequestMethod.POSTJSON) {
+                headers.put(reqSign.name(), rasSign(pars, stamp, sign));
+            } else {
+                headers.put(reqSign.name(), rasFormSign((Map<String, String>) pars, stamp, sign));
             }
         }
 
@@ -362,89 +374,94 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
         RequestMethod requestMethod = httpRequest.method();
 
-        if (parameters != null && parameters.length > 0) {
-            if (requestMethod == RequestMethod.GET || requestMethod == RequestMethod.POST) {
-                pars = Maps.newHashMap();
-                for (int i = 0, len = parameters.length; i < len; i++) {
-                    Parameter p = parameters[i];
-                    if (p == null || args[i] == null || p.getAnnotation(ReqHeader.class) != null) {
-                        continue;
-                    }
+        if (parameters == null || parameters.length < 1) {
+            return pars;
+        }
 
-                    RequestBody requestBody = p.getAnnotation(RequestBody.class);
-                    if (requestBody != null && !requestBody.header()) {
-                        Map m = BeanUtils.describe(args[0]);
-                        Set s = m.keySet();
-                        for (Object k : s) {
-                            if ("class".equals(k)) {
-                                continue;
-                            }
-                            String value = convertValue(m.get(k));
-                            pars.put((String) k, value);
-                        }
-                    }
+        if (requestMethod == RequestMethod.POSTJSON) {
+            return args[0];
+        }
 
-                    if (args[i] instanceof Collection) {
-                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
-                        if (reqParam == null || reqParam.header()) {
-                            continue;
-                        }
+        pars = Maps.newHashMap();
+        for (int i = 0, len = parameters.length; i < len; i++) {
+            Parameter p = parameters[i];
+            if (p == null || args[i] == null || p.getAnnotation(ReqHeader.class) != null) {
+                continue;
+            }
 
-                        Collection c = (Collection) args[i];
-                        Iterator ite = c.iterator();
-                        int j = 0;
-                        while (ite.hasNext()) {
-                            Object o = ite.next();
-                            if (o instanceof BaseModel) {
-                                Map m = BeanUtils.describe(o);
-                                Set s = m.keySet();
-                                for (Object k : s) {
-                                    if ("class".equals(k)) {
-                                        continue;
-                                    }
-                                    String value = convertValue(m.get(k));
-                                    pars.put(reqParam.value() + "[" + j + "]." + k, value);
-                                }
-                            } else {
-                                String k = reqParam.value();
-                                String value = convertValue(o);
-                                if (pars.containsKey(k)) {
-                                    pars.put(k, pars.get(k) + "," + value);
-                                } else {
-                                    pars.put(k, value);
-                                }
-                            }
-                            j++;
-                        }
+            RequestBody requestBody = p.getAnnotation(RequestBody.class);
+            if (requestBody != null && !requestBody.header()) {
+                pars.putAll(convert2Map((BaseModel) args[i]));
+            }
 
-                    } else if (args[i] instanceof BaseModel) {
-                        Map m = BeanUtils.describe(args[i]);
-                        Set s = m.keySet();
-                        for (Object k : s) {
-                            if ("class".equals(k)) {
-                                continue;
-                            }
-                            String value = convertValue(m.get(k));
-                            pars.put((String) k, value);
-                        }
-                    } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
-                        ReqParam reqParam = p.getAnnotation(ReqParam.class);
-                        if (reqParam != null && !reqParam.header()) {
-                            String value = args[i] == null ? "" : (args[i] + "");
-                            pars.put(reqParam.value(), value);
-                            continue;
-                        }
+            if (args[i] instanceof Collection) {
+                ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                if (reqParam == null || reqParam.header()) {
+                    continue;
+                }
+
+                Collection c = (Collection) args[i];
+                Iterator ite = c.iterator();
+                while (ite.hasNext()) {
+                    Object o = ite.next();
+                    if (o instanceof BaseModel) {
+                        pars.putAll(convert2Map((BaseModel) o));
                     } else {
-                        throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
+                        String k = reqParam.value();
+                        String value = convertValue(o);
+                        if (pars.containsKey(k)) {
+                            pars.put(k, pars.get(k) + "," + value);
+                        } else {
+                            pars.put(k, value);
+                        }
                     }
                 }
+
+            } else if (args[i] instanceof BaseModel) {
+                pars.putAll(convert2Map((BaseModel) args[i]));
+            } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                if (reqParam != null && !reqParam.header()) {
+                    String value = args[i] == null ? "" : (args[i] + "");
+                    pars.put(reqParam.value(), value);
+                    continue;
+                }
             } else {
-                return args[0];
+                throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
             }
         }
 
         return pars;
+    }
 
+    protected String rasFormSign(Map<String, String> pars, String stamp, String privateKey) {
+        StringJoiner joiner = new StringJoiner("&");
+        if (MapUtils.isNotEmpty(pars)) {
+            List<String> keys = new ArrayList<>(pars.keySet());
+            Collections.sort(keys);
+            for (String key : keys) {
+                joiner.add(String.format("%s=%s", key, pars.get(key)));
+            }
+        }
+        if (stamp != null) {
+            joiner.add(stamp + "");
+        }
+        return RSAHelper.sign(joiner.toString(), privateKey);
+    }
+
+    protected String rasSign(Object requestBody, String stamp, String privateKey) {
+        StringJoiner joiner = new StringJoiner("&");
+        if (requestBody != null) {
+            try {
+                joiner.add(OBJECT_MAPPER.writeValueAsString(requestBody));
+            } catch (Exception e) {
+                logger.error(e.getMessage(), e);
+            }
+        }
+        if (stamp != null) {
+            joiner.add(stamp + "");
+        }
+        return RSAHelper.sign(joiner.toString(), privateKey);
     }
 
     protected boolean isWrapClass(Class clz) {
@@ -556,6 +573,20 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             }
         }
         return false;
+    }
+
+    protected Map<String, String> convert2Map(BaseModel baseModel) {
+        try {
+            String json = OBJECT_MAPPER.writeValueAsString(baseModel);
+            Map<String, Object> map = OBJECT_MAPPER.readValue(json, HashMap.class);
+            Map<String, String> ret = new HashMap<>();
+            map.forEach((k, v) -> ret.put(k, convertValue(v)));
+            return ret;
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+        }
+
+        return new HashMap<>();
     }
 
     protected String toJsonString(Object obj) {
