@@ -148,7 +148,7 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         String requestUrl = httpRequest.url();
 
         if ("".equals(requestUrl)) {
-            requestUrl = env.getProperty(httpRequest.urlKey());
+            requestUrl = env.getProperty(httpRequest.urlKey(), System.getProperty(httpRequest.urlKey()));
         }
 
         if (requestUrl == null || "".equals(requestUrl)) {
