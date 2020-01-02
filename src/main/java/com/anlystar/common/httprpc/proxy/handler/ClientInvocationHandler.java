@@ -8,6 +8,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -155,6 +156,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
             throw new IllegalArgumentException("未查询到 URL 配置信息, key => " + httpRequest.urlKey());
         }
 
+        StringJoiner parsJoiner = new StringJoiner("&");
+
         Parameter[] parameters = method.getParameters();
         if (parameters != null && parameters.length > 0) {
             for (int i = 0, len = parameters.length; i < len; i++) {
@@ -163,12 +166,29 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     continue;
                 }
                 if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
+                    String value = args[i] == null ? "" : (args[i] + "");
                     PathVariable pathVariable = p.getAnnotation(PathVariable.class);
                     if (pathVariable != null) {
-                        String value = args[i] == null ? "" : (args[i] + "");
                         requestUrl = requestUrl.replace(String.format("{%s}", pathVariable.value()), value);
                     }
+                    ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                    if (reqParam != null && reqParam.url()) {
+                        try {
+                            parsJoiner.add(URLEncoder.encode(reqParam.name(), "utf-8") + "=" + URLEncoder.encode(value,
+                                    "utf-8"));
+                        } catch (Exception e) {
+                            logger.error(e.getMessage(), e);
+                        }
+                    }
                 }
+            }
+        }
+
+        if (parsJoiner.length() > 0) {
+            if (requestUrl.endsWith("?")) {
+                requestUrl = requestUrl + parsJoiner.toString();
+            } else {
+                requestUrl = requestUrl + "?" + parsJoiner.toString();
             }
         }
         return requestUrl;

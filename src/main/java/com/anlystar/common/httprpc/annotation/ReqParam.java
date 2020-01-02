@@ -37,4 +37,10 @@ public @interface ReqParam {
      */
     boolean header() default false;
 
+    /**
+     * 是否在 url 中
+     * @return
+     */
+    boolean url() default false;
+
 }
