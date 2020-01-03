@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -27,6 +28,7 @@ import org.apache.commons.collections4.MapUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.utils.DateUtils;
 import org.apache.http.concurrent.FutureCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -173,6 +175,17 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     }
                     ReqParam reqParam = p.getAnnotation(ReqParam.class);
                     if (reqParam != null && reqParam.url()) {
+                        try {
+                            parsJoiner.add(URLEncoder.encode(reqParam.name(), "utf-8") + "=" + URLEncoder.encode(value,
+                                    "utf-8"));
+                        } catch (Exception e) {
+                            logger.error(e.getMessage(), e);
+                        }
+                    }
+                } else if (args[i] instanceof Date){
+                    ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                    if (reqParam != null && !reqParam.header() && !reqParam.url()) {
+                        String value = DateUtils.formatDate((Date) args[i], reqParam.format());
                         try {
                             parsJoiner.add(URLEncoder.encode(reqParam.name(), "utf-8") + "=" + URLEncoder.encode(value,
                                     "utf-8"));
@@ -356,6 +369,12 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     String value = args[i] == null ? "" : (args[i] + "");
                     headers.put(reqParam.value(), value);
                 }
+            } else if (args[i] instanceof Date){
+                ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                if (reqParam != null && !reqParam.header() && !reqParam.url()) {
+                    String value = DateUtils.formatDate((Date) args[i], reqParam.format());
+                    headers.put(reqParam.value(), value);
+                }
             } else {
                 throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());
             }
@@ -441,10 +460,15 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                 pars.putAll(convert2Map((BaseModel) args[i]));
             } else if ((args[i] instanceof String || isWrapClass(args[i].getClass()))) {
                 ReqParam reqParam = p.getAnnotation(ReqParam.class);
-                if (reqParam != null && !reqParam.header()) {
+                if (reqParam != null && !reqParam.header() && !reqParam.url()) {
                     String value = args[i] == null ? "" : (args[i] + "");
                     pars.put(reqParam.value(), value);
-                    continue;
+                }
+            } else if (args[i] instanceof Date){
+                ReqParam reqParam = p.getAnnotation(ReqParam.class);
+                if (reqParam != null && !reqParam.header() && !reqParam.url()) {
+                    String value = DateUtils.formatDate((Date) args[i], reqParam.format());
+                    pars.put(reqParam.value(), value);
                 }
             } else {
                 throw new IllegalArgumentException("不支持的参数类型 -> " + args[i].getClass());

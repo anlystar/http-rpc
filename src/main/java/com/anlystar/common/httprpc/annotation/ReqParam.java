@@ -43,4 +43,10 @@ public @interface ReqParam {
      */
     boolean url() default false;
 
+    /**
+     * 日期格式
+     * @return
+     */
+    String format() default "yyyy-MM-dd HH:mm:ss";
+
 }
