@@ -46,6 +46,7 @@ import com.anlystar.common.httprpc.annotation.ReqParam;
 import com.anlystar.common.httprpc.callback.CallbackFuture;
 import com.anlystar.common.httprpc.helper.AsyncHttpClientHelper;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
+import com.anlystar.common.httprpc.helper.ValidationHelper;
 import com.anlystar.common.httprpc.model.BaseModel;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -120,6 +121,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         if ("".equals(httpRequest.url()) && "".equals(httpRequest.urlKey())) {
             throw new IllegalArgumentException("未配置URL信息");
         }
+
+        ValidationHelper.validateParameters(proxy, method, args);
 
         String requestUrl = getRequestUrl(method, args, httpRequest);
 

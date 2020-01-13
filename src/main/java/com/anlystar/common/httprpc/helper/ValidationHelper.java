@@ -19,21 +19,43 @@ import org.apache.commons.lang3.StringUtils;
  */
 public abstract class ValidationHelper {
 
-    private static ExecutableValidator validator = Validation.buildDefaultValidatorFactory().getValidator().forExecutables();
+    public abstract class ValidationHelper {
 
-   /**
-     * 注解验证参数
-     * @param obj
-     * @param <T>
-     */
-    public static <T> void validateParameters(T obj, Method method, Object[] params) {
-        Set<ConstraintViolation<T>> constraintViolations = validator.validateParameters(obj, method, params);
-        // 抛出检验异常
-        if (constraintViolations != null && constraintViolations.size() > 0) {
-            List<String> messages = constraintViolations.stream()
-                    .map(ConstraintViolation::getMessage).collect(Collectors.toList());
-            throw new IllegalArgumentException(StringUtils.join(messages, ","));
+        private static ExecutableValidator EXECUTABLE_VALIDATOR =
+                Validation.buildDefaultValidatorFactory().getValidator().forExecutables();
+
+        private static Validator VALIDATOR = Validation.buildDefaultValidatorFactory().getValidator();
+
+        /**
+         * 注解验证参数
+         * @param obj
+         * @param <T>
+         */
+        public static <T> void validateParameters(T obj, Method method, Object[] params) {
+            Set<ConstraintViolation<T>> constraintViolations = EXECUTABLE_VALIDATOR.validateParameters(obj, method, params);
+            // 抛出检验异常
+            if (constraintViolations != null && constraintViolations.size() > 0) {
+                List<String> messages = constraintViolations.stream()
+                        .map(ConstraintViolation::getMessage).collect(Collectors.toList());
+                throw new IllegalArgumentException(StringUtils.join(messages, ","));
+            }
         }
+
+        /**
+         * 注解验证参数
+         * @param object
+         * @param <T>
+         */
+        public static <T> void validate(T object, Class<?>... groups) {
+            Set<ConstraintViolation<T>> constraintViolations = VALIDATOR.validate(object, groups);
+            // 抛出检验异常
+            if (constraintViolations != null && constraintViolations.size() > 0) {
+                List<String> messages = constraintViolations.stream()
+                        .map(ConstraintViolation::getMessage).collect(Collectors.toList());
+                throw new IllegalArgumentException(StringUtils.join(messages, ","));
+            }
+        }
+
     }
 
 }
