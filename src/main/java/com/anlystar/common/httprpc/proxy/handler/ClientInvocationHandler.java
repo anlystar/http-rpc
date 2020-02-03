@@ -19,30 +19,28 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.Future;
 
-import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.utils.DateUtils;
 import org.apache.http.concurrent.FutureCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 
+import com.anlystar.common.helper.DateHelper;
 import com.anlystar.common.helper.RSAHelper;
 import com.anlystar.common.httprpc.annotation.CallFunction;
-import com.anlystar.common.httprpc.annotation.PathVariable;
 import com.anlystar.common.httprpc.annotation.HttpRequest;
+import com.anlystar.common.httprpc.annotation.PathVariable;
+import com.anlystar.common.httprpc.annotation.ReqHeader;
+import com.anlystar.common.httprpc.annotation.ReqParam;
 import com.anlystar.common.httprpc.annotation.ReqSign;
 import com.anlystar.common.httprpc.annotation.RequestBody;
 import com.anlystar.common.httprpc.annotation.RequestMethod;
-import com.anlystar.common.httprpc.annotation.ReqHeader;
-import com.anlystar.common.httprpc.annotation.ReqParam;
 import com.anlystar.common.httprpc.callback.CallbackFuture;
 import com.anlystar.common.httprpc.helper.AsyncHttpClientHelper;
 import com.anlystar.common.httprpc.helper.HttpClientHelper;
@@ -113,8 +111,8 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
         HttpRequest httpRequest = method.getAnnotation(HttpRequest.class);
 
         if (httpRequest.async() && !("void".equals(returnType.getName())
-                                           || returnType.equals(Future.class)
-                                           || Future.class.isAssignableFrom(returnType))) {
+                                             || returnType.equals(Future.class)
+                                             || Future.class.isAssignableFrom(returnType))) {
             throw new IllegalArgumentException("不支持的返回值");
         }
 
@@ -185,10 +183,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                             logger.error(e.getMessage(), e);
                         }
                     }
-                } else if (args[i] instanceof Date){
+                } else if (args[i] instanceof Date) {
                     ReqParam reqParam = p.getAnnotation(ReqParam.class);
                     if (reqParam != null && !reqParam.header() && !reqParam.url()) {
-                        String value = DateUtils.formatDate((Date) args[i], reqParam.format());
+                        String value = DateHelper.format((Date) args[i], reqParam.format());
                         try {
                             parsJoiner.add(URLEncoder.encode(reqParam.name(), "utf-8") + "=" + URLEncoder.encode(value,
                                     "utf-8"));
@@ -372,10 +370,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     String value = args[i] == null ? "" : (args[i] + "");
                     headers.put(reqParam.value(), value);
                 }
-            } else if (args[i] instanceof Date){
+            } else if (args[i] instanceof Date) {
                 ReqParam reqParam = p.getAnnotation(ReqParam.class);
-                if (reqParam != null && !reqParam.header() && !reqParam.url()) {
-                    String value = DateUtils.formatDate((Date) args[i], reqParam.format());
+                if (reqParam != null && reqParam.header() && !reqParam.url()) {
+                    String value = DateHelper.format((Date) args[i], reqParam.format());
                     headers.put(reqParam.value(), value);
                 }
             } else {
@@ -467,10 +465,10 @@ public class ClientInvocationHandler extends AbstractInvocationHandler {
                     String value = args[i] == null ? "" : (args[i] + "");
                     pars.put(reqParam.value(), value);
                 }
-            } else if (args[i] instanceof Date){
+            } else if (args[i] instanceof Date) {
                 ReqParam reqParam = p.getAnnotation(ReqParam.class);
                 if (reqParam != null && !reqParam.header() && !reqParam.url()) {
-                    String value = DateUtils.formatDate((Date) args[i], reqParam.format());
+                    String value = DateHelper.format((Date) args[i], reqParam.format());
                     pars.put(reqParam.value(), value);
                 }
             } else {
